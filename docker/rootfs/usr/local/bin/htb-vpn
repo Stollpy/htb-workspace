@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Gestion du VPN HTB dans le conteneur.
+# Usage: htb-vpn up [fichier.ovpn] | down | restart | status | ip | log
+
+VPN_DIR=${VPN_DIR:-/vpn}
+LOG=/var/log/openvpn.log
+PIDFILE=/run/openvpn-htb.pid
+
+tun_ip() { ip -4 -o addr show dev tun0 2>/dev/null | awk '{print $4}' | cut -d/ -f1; }
+running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+config() {
+  local f=${1:-${VPN_FILE:-}}
+  if [ -n "$f" ]; then
+    [ -f "$f" ] && echo "$f" || echo "$VPN_DIR/$f"
+  else
+    ls "$VPN_DIR"/*.ovpn 2>/dev/null | head -1
+  fi
+}
+
+up() {
+  if running; then echo "[*] VPN deja lance (tun0 = $(tun_ip))"; return 0; fi
+  local c; c=$(config "$1")
+  [ -f "$c" ] || { echo "[!] Aucun .ovpn trouve ($c). Mets-le dans ./vpn/"; return 1; }
+  echo "[*] Connexion avec $(basename "$c")..."
+  openvpn --config "$c" --daemon htb-vpn --log "$LOG" --writepid "$PIDFILE" || return 1
+  for _ in $(seq 1 30); do
+    if [ -n "$(tun_ip)" ]; then echo "[+] VPN up : tun0 = $(tun_ip)"; return 0; fi
+    sleep 1
+  done
+  echo "[!] tun0 n'est pas monte apres 30s. Dernieres lignes du log :"
+  tail -n 15 "$LOG"
+  return 1
+}
+
+down() {
+  if running; then kill "$(cat "$PIDFILE")"; rm -f "$PIDFILE"; echo "[*] VPN arrete"
+  else pkill -x openvpn 2>/dev/null; echo "[*] VPN deja arrete"; fi
+}
+
+status() {
+  if running && [ -n "$(tun_ip)" ]; then
+    echo "[+] VPN connecte : tun0 = $(tun_ip)"
+    ip route | grep -E 'tun0' | sed 's/^/    route: /'
+  elif running; then
+    echo "[~] OpenVPN tourne mais tun0 n'a pas d'IP (voir: htb-vpn log)"
+  else
+    echo "[-] VPN deconnecte (htb-vpn up)"
+  fi
+}
+
+case "${1:-status}" in
+  up)      up "$2" ;;
+  down)    down ;;
+  restart) down; sleep 1; up "$2" ;;
+  status)  status ;;
+  ip)      tun_ip ;;
+  log)     tail -n 50 -f "$LOG" ;;
+  *)       echo "Usage: htb-vpn up [fichier.ovpn] | down | restart | status | ip | log"; exit 1 ;;
+esac

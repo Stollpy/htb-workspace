@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Bureau XFCE dans le navigateur : Xtigervnc (:1, port 5901) + noVNC (port 6080).
+# Usage: htb-gui start | stop | status
+
+DISPLAY_NUM=1
+VNC_PORT=$((5900 + DISPLAY_NUM))
+NOVNC_PORT=6080
+
+start() {
+  if pgrep -x Xtigervnc >/dev/null; then echo "[*] Bureau deja lance"; return 0; fi
+  mkdir -p /root/.vnc
+  echo "${VNC_PASSWORD:-htb}" | vncpasswd -f > /root/.vnc/passwd
+  chmod 600 /root/.vnc/passwd
+  rm -f /tmp/.X${DISPLAY_NUM}-lock /tmp/.X11-unix/X${DISPLAY_NUM}
+
+  Xtigervnc :${DISPLAY_NUM} -geometry "${VNC_RESOLUTION:-1600x900}" -depth 24 \
+    -rfbport ${VNC_PORT} -localhost -SecurityTypes VncAuth \
+    -PasswordFile /root/.vnc/passwd -AlwaysShared -desktop kali \
+    >/var/log/vnc.log 2>&1 &
+  sleep 2
+
+  DISPLAY=:${DISPLAY_NUM} dbus-launch --exit-with-session startxfce4 >/var/log/xfce.log 2>&1 &
+  websockify --web /usr/share/novnc ${NOVNC_PORT} localhost:${VNC_PORT} >/var/log/novnc.log 2>&1 &
+  echo "[+] Bureau : http://localhost:${NOVNC_PORT}/vnc.html (mot de passe: ${VNC_PASSWORD:-htb})"
+}
+
+stop() {
+  pkill -f websockify; pkill -x xfce4-session; pkill -x Xtigervnc
+  echo "[*] Bureau arrete"
+}
+
+case "${1:-start}" in
+  start)  start ;;
+  stop)   stop ;;
+  status) pgrep -x Xtigervnc >/dev/null && echo "[+] Bureau lance" || echo "[-] Bureau arrete" ;;
+  *)      echo "Usage: htb-gui start | stop | status"; exit 1 ;;
+esac

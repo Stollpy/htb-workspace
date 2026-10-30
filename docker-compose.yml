@@ -1,0 +1,36 @@
+services:
+  kali:
+    build: ./docker
+    image: htb-kali:latest
+    container_name: htb-kali
+    hostname: kali
+    init: true
+    stdin_open: true
+    tty: true
+
+    # OpenVPN tourne DANS le conteneur : les machines HTB joignent directement tun0
+    # (reverse shells, serveurs HTTP de transfert, etc.)
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+
+    shm_size: 2gb  # Firefox / Burp dans le bureau noVNC
+
+    environment:
+      TZ: Europe/Paris
+      AUTO_VPN: "1"                     # connexion VPN au demarrage
+      VPN_FILE: academy-regular.ovpn    # fichier dans ./vpn/
+      ENABLE_GUI: "1"                   # bureau XFCE sur http://localhost:6080
+      VNC_PASSWORD: htb
+      VNC_RESOLUTION: 1600x900
+
+    volumes:
+      - ./vpn:/vpn:ro
+      - ./workspace:/root/workspace
+
+    ports:
+      - "127.0.0.1:6080:6080"
