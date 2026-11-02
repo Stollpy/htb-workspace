@@ -7,10 +7,14 @@ export HISTSIZE=100000 SAVEHIST=100000
 export ROCKYOU=/usr/share/wordlists/rockyou.txt
 export SECLISTS=/usr/share/seclists
 
-# IP VPN (LHOST pour les reverse shells), affichee a droite du prompt
+# IP VPN (LHOST pour les reverse shells), aussi affichee a droite du prompt
 tun0() { ip -4 -o addr show dev tun0 2>/dev/null | awk '{print $4}' | cut -d/ -f1; }
-setopt PROMPT_SUBST
-RPROMPT='%F{cyan}[${$(tun0):-no-vpn}]%f'"$RPROMPT"
+# Indicateur VPN a droite UNIQUEMENT si powerlevel10k ne gere pas deja le prompt
+# (avec p10k, c'est le segment custom "vpn" du .zshrc qui l'affiche).
+if ! typeset -f prompt_vpn >/dev/null 2>&1; then
+  setopt PROMPT_SUBST
+  RPROMPT='%F{cyan}[${$(tun0):-no-vpn}]%f'"$RPROMPT"
+fi
 
 alias vpn='htb-vpn'
 alias myip='tun0'

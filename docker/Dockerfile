@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y \
       openvpn iproute2 iputils-ping dnsutils net-tools traceroute \
       netcat-traditional socat proxychains4 openssh-client sshpass \
       ftp telnet smbclient snmp onesixtyone tcpdump tshark \
+      # clients bases de donnees / cloud (Redis, AWS S3...)
+      redis-tools awscli \
       # scan / enumeration
       nmap masscan rustscan whatweb nikto wpscan nuclei httpx-toolkit \
       subfinder gobuster ffuf feroxbuster dirb wfuzz cewl \
@@ -49,11 +51,26 @@ RUN apt-get update && apt-get install -y \
 # rockyou decompresse, pret a l'emploi
 RUN if [ -f /usr/share/wordlists/rockyou.txt.gz ]; then gunzip /usr/share/wordlists/rockyou.txt.gz; fi
 
+# 4) Shell confort : oh-my-zsh + powerlevel10k + plugins + Nerd Font (MesloLGS NF)
+#    Le .zshrc manage est fourni via rootfs/root/.zshrc (COPY ci-dessous).
+RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /root/.oh-my-zsh && \
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
+      /root/.oh-my-zsh/custom/themes/powerlevel10k && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
+      /root/.oh-my-zsh/custom/plugins/zsh-autosuggestions && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting \
+      /root/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting && \
+    mkdir -p /usr/share/fonts/truetype/meslo && cd /usr/share/fonts/truetype/meslo && \
+    base='https://github.com/romkatv/powerlevel10k-media/raw/master' && \
+    curl -fsSLo 'MesloLGS NF Regular.ttf'     "$base/MesloLGS%20NF%20Regular.ttf" && \
+    curl -fsSLo 'MesloLGS NF Bold.ttf'        "$base/MesloLGS%20NF%20Bold.ttf" && \
+    curl -fsSLo 'MesloLGS NF Italic.ttf'      "$base/MesloLGS%20NF%20Italic.ttf" && \
+    curl -fsSLo 'MesloLGS NF Bold Italic.ttf' "$base/MesloLGS%20NF%20Bold%20Italic.ttf" && \
+    fc-cache -f >/dev/null 2>&1 || true
+
 COPY rootfs/ /
 RUN chmod +x /usr/local/bin/* /entrypoint.sh && \
     chsh -s /usr/bin/zsh root && \
-    { [ -f /root/.zshrc ] || cp /etc/skel/.zshrc /root/.zshrc; } && \
-    echo 'source /etc/zsh/htb.zsh' >> /root/.zshrc && \
     mkdir -p /root/workspace
 
 WORKDIR /root/workspace

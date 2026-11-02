@@ -1,0 +1,9 @@
+[Configuration]
+FontName=MesloLGS NF 11
+MiscAlwaysShowTabs=FALSE
+MiscBell=FALSE
+MiscCursorBlinks=TRUE
+MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
+MiscMenubarDefault=FALSE
+MiscToolbarDefault=FALSE
+ScrollingUnlimited=TRUE

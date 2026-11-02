@@ -33,3 +33,9 @@ Sans `make` : `docker compose up -d` puis `docker compose exec kali zsh`.
 
 Un seul VPN HTB actif à la fois : déconnecte celui du Mac si tu en as un.
 Pour les machines du Labs (pas Academy), télécharge le `.ovpn` "Labs", mets-le dans `vpn/` et lance `htb-vpn restart lab.ovpn`.
+
+## Progression HTB
+
+Mes writeups de machines (Starting Point + retirées) sont dans [`writeups/`](writeups/README.md), avec le tableau de progression et les concepts appris.
+
+> Le dossier `workspace/` (scans, loot, historique) et les fichiers `vpn/*.ovpn` (clés privées) sont volontairement **hors du dépôt** — voir `.gitignore`.
