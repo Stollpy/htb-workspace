@@ -1,0 +1,14 @@
+services:
+  ma-box:                              # = NAME
+    build: .
+    image: vulnforge/ma-box:latest
+    container_name: vulnforge-ma-box   # convention: vulnforge-<NAME>
+    hostname: ma-box
+    ports:
+      - "127.0.0.1:8090:80"            # <port host>:<port conteneur>
+    networks:
+      - vulnforge-net
+
+networks:
+  vulnforge-net:
+    external: true

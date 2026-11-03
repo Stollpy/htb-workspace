@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+#
+# vulnforge — catalogue maison de machines vulnérables (style HackTheBox),
+# lançables à la demande par nom ou par CVE, en conteneurs Docker isolés.
+#
+# Usage: ./vulnforge <commande> [box]
+# Astuce: ajoute un alias ->  alias vf="$PWD/vulnforge"
+#
+set -euo pipefail
+
+VF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOXES_DIR="$VF_ROOT/boxes"
+NET="vulnforge-net"           # réseau docker partagé (cible <-> attaquant)
+
+# --- couleurs ---------------------------------------------------------------
+if [ -t 1 ]; then
+  c_reset=$'\033[0m'; c_bold=$'\033[1m'; c_dim=$'\033[2m'
+  c_grn=$'\033[32m'; c_red=$'\033[31m'; c_ylw=$'\033[33m'; c_cyn=$'\033[36m'; c_mag=$'\033[35m'
+else
+  c_reset=; c_bold=; c_dim=; c_grn=; c_red=; c_ylw=; c_cyn=; c_mag=
+fi
+
+die(){ printf '%serror:%s %s\n' "$c_red" "$c_reset" "$*" >&2; exit 1; }
+info(){ printf '%s==>%s %s\n' "$c_cyn" "$c_reset" "$*"; }
+warn(){ printf '%s!!%s %s\n' "$c_ylw" "$c_reset" "$*" >&2; }
+
+command -v docker >/dev/null 2>&1 || die "Docker est requis. Lance Docker Desktop."
+
+# --- helpers box ------------------------------------------------------------
+compose_file(){ echo "$BOXES_DIR/$1/docker-compose.yml"; }
+project(){ echo "vulnforge-$1"; }
+cname(){ echo "vulnforge-$1"; }          # container_name convention
+
+box_exists(){ [ -f "$BOXES_DIR/$1/box.env" ]; }
+
+# charge les variables de box.env (NAME, CVE, ...) dans l'environnement courant
+load_box(){
+  NAME=""; CVE=""; DIFFICULTY=""; CATEGORY=""; PORTS=""; URL=""; SUMMARY=""; TAGS=""
+  # shellcheck disable=SC1090
+  . "$BOXES_DIR/$1/box.env"
+}
+
+list_boxes(){
+  for d in "$BOXES_DIR"/*/; do
+    b="$(basename "$d")"
+    case "$b" in _*) continue;; esac           # ignore les templates (_TEMPLATE)
+    [ -f "$d/box.env" ] && echo "$b"
+  done
+}
+
+running_names(){ docker ps --format '{{.Names}}' 2>/dev/null; }
+is_running(){ running_names | grep -qx "$(cname "$1")"; }
+
+ensure_net(){
+  docker network inspect "$NET" >/dev/null 2>&1 || {
+    info "Création du réseau docker '$NET'"
+    docker network create "$NET" >/dev/null
+  }
+}
+
+require_box(){
+  [ -n "${1:-}" ] || die "nom de box manquant. Essaie: $(basename "$0") list"
+  box_exists "$1" || die "box inconnue: '$1'. Liste: $(basename "$0") list"
+}
+
+box_ip(){ docker inspect -f "{{with index .NetworkSettings.Networks \"$NET\"}}{{.IPAddress}}{{end}}" "$(cname "$1")" 2>/dev/null; }
+
+# --- commandes --------------------------------------------------------------
+cmd_list(){
+  printf '%s%-14s %-7s %-14s %-28s %s%s\n' "$c_bold" "BOX" "DIFF" "CATEGORIE" "CVE / THEME" "ETAT" "$c_reset"
+  printf '%s%s%s\n' "$c_dim" "----------------------------------------------------------------------------------------" "$c_reset"
+  local run; run="$(running_names)"
+  for b in $(list_boxes); do
+    load_box "$b"
+    local state="$c_dim""arrêtée$c_reset"
+    echo "$run" | grep -qx "$(cname "$b")" && state="$c_grn●$c_reset running"
+    printf '%-14s %-7s %-14s %-28s %b\n' \
+      "$NAME" "${DIFFICULTY:-?}" "${CATEGORY:-?}" "${CVE:-—}" "$state"
+  done
+  echo
+  printf '%sinfo <box>%s pour les détails  ·  %sstart <box>%s pour lancer\n' "$c_dim" "$c_reset" "$c_dim" "$c_reset"
+}
+
+cmd_search(){
+  local q="${1:-}"; [ -n "$q" ] || die "usage: search <terme|CVE>"
+  local hit=0
+  for b in $(list_boxes); do
+    load_box "$b"
+    local hay="$NAME $CVE $CATEGORY $TAGS $SUMMARY"
+    if echo "$hay" | grep -iq -- "$q"; then
+      hit=1
+      printf '%s%-14s%s %s%s%s\n' "$c_bold" "$NAME" "$c_reset" "$c_dim" "${CVE:-—}" "$c_reset"
+      printf '   %s\n' "$SUMMARY"
+    fi
+  done
+  [ "$hit" = 1 ] || warn "aucune box ne correspond à '$q'"
+}
+
+cmd_info(){
+  require_box "${1:-}"; load_box "$1"
+  printf '%s%s%s  %s[%s]%s\n' "$c_bold" "$NAME" "$c_reset" "$c_dim" "$DIFFICULTY" "$c_reset"
+  printf '  CVE / thème : %s\n' "${CVE:-—}"
+  printf '  Catégorie   : %s\n' "${CATEGORY:-—}"
+  printf '  Ports       : %s\n' "${PORTS:-—}"
+  printf '  URL         : %s\n' "${URL:-—}"
+  printf '  Tags        : %s\n' "${TAGS:-—}"
+  printf '  Résumé      : %s\n' "${SUMMARY:-—}"
+  is_running "$1" && printf '  État        : %s● running%s  (IP %s: %s)\n' "$c_grn" "$c_reset" "$NET" "$(box_ip "$1")"
+  local readme="$BOXES_DIR/$1/README.md"
+  [ -f "$readme" ] && printf '  Briefing    : %s\n' "$readme"
+}
+
+cmd_start(){
+  require_box "${1:-}"; load_box "$1"
+  ensure_net
+  info "Build + démarrage de '$NAME' …"
+  docker compose -p "$(project "$1")" -f "$(compose_file "$1")" up -d --build
+  echo
+  printf '%s%s est en ligne%s\n' "$c_grn" "$NAME" "$c_reset"
+  [ -n "${URL:-}" ] && printf '  Depuis le host : %s%s%s\n' "$c_cyn" "$URL" "$c_reset"
+  local ip; ip="$(box_ip "$1")"
+  [ -n "$ip" ] && printf '  Sur %s     : %s (hostname: %s)\n' "$NET" "$ip" "$NAME"
+  echo
+  printf '  %sDepuis ton conteneur Kali (htb-kali) :%s\n' "$c_dim" "$c_reset"
+  printf '    docker network connect %s htb-kali   %s# une seule fois%s\n' "$NET" "$c_dim" "$c_reset"
+  printf '    puis vise  http://%s/  depuis Kali\n' "${ip:-$NAME}"
+  echo
+  printf '  Briefing : %s/%s/README.md\n' "boxes" "$1"
+}
+
+cmd_stop(){
+  require_box "${1:-}"; load_box "$1"
+  info "Arrêt de '$NAME'"
+  docker compose -p "$(project "$1")" -f "$(compose_file "$1")" down
+}
+
+cmd_reset(){
+  require_box "${1:-}"; load_box "$1"
+  info "Reset de '$NAME' (état + flags régénérés)"
+  docker compose -p "$(project "$1")" -f "$(compose_file "$1")" down -v
+  cmd_start "$1"
+}
+
+cmd_restart(){ cmd_stop "$1"; cmd_start "$1"; }
+
+cmd_status(){
+  local any=0
+  for b in $(list_boxes); do
+    if is_running "$b"; then
+      any=1; load_box "$b"
+      printf '%s●%s %-14s %s  (IP: %s)\n' "$c_grn" "$c_reset" "$NAME" "${URL:-}" "$(box_ip "$b")"
+    fi
+  done
+  [ "$any" = 1 ] || info "aucune box en cours d'exécution"
+}
+
+cmd_stop_all(){
+  for b in $(list_boxes); do is_running "$b" && cmd_stop "$b"; done
+  info "tout est arrêté"
+}
+
+cmd_logs(){ require_box "${1:-}"; docker compose -p "$(project "$1")" -f "$(compose_file "$1")" logs -f; }
+
+cmd_shell(){
+  require_box "${1:-}"
+  is_running "$1" || die "'$1' n'est pas démarrée (start d'abord)"
+  info "shell dans la cible '$1' (pour debug/étude du lab)"
+  docker exec -it "$(cname "$1")" /bin/bash 2>/dev/null || docker exec -it "$(cname "$1")" /bin/sh
+}
+
+usage(){
+  cat <<EOF
+${c_bold}vulnforge${c_reset} — ton catalogue maison de machines vulnérables (style HTB)
+
+  ${c_bold}list${c_reset}                 liste toutes les box du catalogue
+  ${c_bold}search${c_reset} <terme|CVE>   cherche par nom, CVE, tag ou description
+  ${c_bold}info${c_reset} <box>           détails d'une box
+  ${c_bold}start${c_reset} <box>          build + démarre la box (isolée sur $NET)
+  ${c_bold}stop${c_reset} <box>           arrête la box
+  ${c_bold}restart${c_reset} <box>        stop puis start
+  ${c_bold}reset${c_reset} <box>          remet la box à neuf (flags régénérés)
+  ${c_bold}status${c_reset}               box actuellement en ligne
+  ${c_bold}stop-all${c_reset}             arrête toutes les box
+  ${c_bold}logs${c_reset} <box>           suit les logs de la cible
+  ${c_bold}shell${c_reset} <box>          shell dans la cible (debug/étude)
+
+Exemples :
+  ./vulnforge list
+  ./vulnforge search CVE-2026-109618
+  ./vulnforge start php2shell
+EOF
+}
+
+main(){
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    list|ls)        cmd_list ;;
+    search|find)    cmd_search "${1:-}" ;;
+    info|show)      cmd_info "${1:-}" ;;
+    start|up)       cmd_start "${1:-}" ;;
+    stop|down)      cmd_stop "${1:-}" ;;
+    restart)        cmd_restart "${1:-}" ;;
+    reset)          cmd_reset "${1:-}" ;;
+    status|ps)      cmd_status ;;
+    stop-all|down-all) cmd_stop_all ;;
+    logs)           cmd_logs "${1:-}" ;;
+    shell|exec)     cmd_shell "${1:-}" ;;
+    help|-h|--help) usage ;;
+    *) warn "commande inconnue: $cmd"; usage; exit 1 ;;
+  esac
+}
+main "$@"
